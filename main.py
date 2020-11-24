@@ -14,7 +14,7 @@ class RecNN(nn.Module):
     def __init__(self):
         super(RecNN, self).__init__()
         # A network for each type of node
-        self.length = 2
+        self.length = 1
         self.network_map = {
             "terminal": nn.Linear(1, self.length, bias=False),
             "+": nn.Linear(2 * self.length, self.length, bias=False),
@@ -58,23 +58,21 @@ class Node:
         self.inputs = []
 
 
-def execute_network(train, test, valid, epochs=100):
-    net = RecNN()
-    loss_fn = nn.MSELoss()
-    optimizer = torch.optim.Adam(net.parameters(), lr=0.001)
-
+def execute_network(net, loss_fn, optimizer, train, test, valid, epochs=100):
     for epoch in range(epochs):
         running_loss = 0
+        optimizer.zero_grad()
+        loss = 0
+        random.shuffle(train)
         for x, y in train:
-            optimizer.zero_grad()
             prediction = net(deepcopy(x))
-            loss = loss_fn(prediction, y)
-            loss.backward()
-            optimizer.step()
-            running_loss += loss.item()
-        print("loss:", running_loss / len(train))
+            loss += loss_fn(prediction, y)
+        loss.backward()
+        optimizer.step()
+        running_loss += loss.item()
+        #print("loss:", running_loss / len(train))
         valid_loss = sum(loss_fn(net(deepcopy(x)), y).item() for x, y in valid) / len(valid)
-        print("val_loss:", valid_loss)
+        #print("val_loss:", valid_loss)
     test_loss = sum(loss_fn(net(deepcopy(x)), y).item() for x, y in test) / len(test)
     print("test_loss:", test_loss)
 
@@ -99,8 +97,8 @@ def solve(graph: nx.DiGraph) -> float:
     return _subsolve(root)
 
 
-def generate_tree(name) -> Tuple[Node, Set[Tuple[Node, Node]]]:
-    if random.random() < 0.3 or len(name) > 10:
+def generate_tree(name, max_depth) -> Tuple[Node, Set[Tuple[Node, Node]]]:
+    if random.random() < 0.3 or len(name) >= max_depth:
         root = Node(name, (0.5 - random.random()))
         return root, set()
     else:
@@ -109,13 +107,13 @@ def generate_tree(name) -> Tuple[Node, Set[Tuple[Node, Node]]]:
         else:
             operator = "-"
         root = Node(name, operator)
-        left, left_edges = generate_tree(name + "l")
-        right, right_edges = generate_tree(name + "r")
+        left, left_edges = generate_tree(name + "l", max_depth)
+        right, right_edges = generate_tree(name + "r", max_depth)
         return root, left_edges.union(right_edges).union({(left, root), (right, root)})
 
 
-def generate_DAG():
-    root, edges = generate_tree("")
+def generate_DAG(max_depth):
+    root, edges = generate_tree("", max_depth)
     if edges:
         return nx.DiGraph(edges)
     else:
@@ -125,11 +123,17 @@ def generate_DAG():
 
 
 def main():
-    n = 100
-    dataset = [(t, torch.tensor([solve(t)])) for _ in range(n) for t in [generate_DAG()]]
-    train, temp = train_test_split(dataset, train_size=0.7)
-    test, valid = train_test_split(temp, train_size=0.7)
-    execute_network(train, test, valid)
+    net = RecNN()
+    loss_fn = nn.MSELoss()
+    optimizer = torch.optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
+    dataset = []
+    for depth in range(0, 10):
+        print("depth", depth)
+        n = 100
+        dataset += [(t, torch.tensor([solve(t)])) for _ in range(n) for t in [generate_DAG(depth)]]
+        train, temp = train_test_split(dataset, train_size=0.7)
+        test, valid = train_test_split(temp, train_size=0.7)
+        execute_network(net, loss_fn, optimizer, train, test, valid)
 
 
 if __name__ == "__main__":
